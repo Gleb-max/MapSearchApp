@@ -1,22 +1,22 @@
 import sys
 from PyQt5 import QtGui
 from PyQt5.QtGui import QPixmap, QMovie
-from PyQt5.QtCore import Qt, QByteArray
+from PyQt5.QtCore import QByteArray, Qt
 from map_tools.api import ApiInteraction
 from PyQt5.QtWidgets import (
     QApplication,
+    QButtonGroup,
+    QHBoxLayout,
     QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QCheckBox,
+    QGroupBox,
+    QLineEdit,
     QWidget,
     QLabel,
-    QLineEdit,
-    QPushButton,
-    QHBoxLayout,
-    QVBoxLayout,
-    QButtonGroup,
-    QGroupBox,
-    QCheckBox,
-    QMessageBox,
-    QSizePolicy,
 )
 
 
@@ -36,7 +36,8 @@ class MapLabel(QLabel):
         self.scale = 5
         self.map_type = 0
         self.object_label = True
-        self.new_address = False
+        self.map_center = None
+        self.result_code = 0
         self.api_interaction = ApiInteraction()
         self.map_types = {
             0: "map",
@@ -44,6 +45,7 @@ class MapLabel(QLabel):
             2: "sat,skl",
         }
         self.methods = {
+            "mapMove": self.mapMove,
             "scaleUp": self.scaleUp,
             "scaleDown": self.scaleDown,
             "hideLabel": self.hideLabel,
@@ -69,16 +71,18 @@ class MapLabel(QLabel):
 
     def setAddress(self, address):
         new_toponym = self.api_interaction.get_geocode(address)
-        print(f"Found new toponym: {new_toponym}")
+        # print(f"Found new toponym: {new_toponym}")
         if new_toponym is None:
+            self.result_code = 404
             return
+        self.result_code = 200
         self.toponym = new_toponym
         self.object_label = True
-        self.new_address = True
-        print("Map address was update")
+        self.map_center = self.toponym.getCoordinates()
+        # print("Map address was update")
 
     def setMapType(self, type_id):
-        print(f"Set new map type ({self.map_types[type_id]})")
+        # print(f"Set new map type ({self.map_types[type_id]})")
         if type_id in self.map_types:
             self.map_type = type_id
 
@@ -86,35 +90,40 @@ class MapLabel(QLabel):
         if self.scale == self.MAX_SCALE:
             return
         self.scale += 1
-        print("Scale was up")
+        # print("Scale was up")
 
     def scaleDown(self):
         if self.scale == self.MIN_SCALE:
             return
         self.scale -= 1
-        print("Scale was down")
+        # print("Scale was down")
 
     def hideLabel(self):
         self.object_label = False
-        print("Label reset")
+        # print("Label reset")
 
     def updateView(self):
         if self.toponym is None:
-            print("no address")
+            # print("no address")
             return
+        args = [
+            ",".join(map(str, self.map_center)),
+            self.map_types[self.map_type],
+            self.scale,
+        ]
+        if self.object_label:
+            args.append(self.toponym.getCoordinates())
+        new_map = self.api_interaction.get_image(*args)
+        if new_map is None:
+            self.result_code = 401
+            return
+        pixmap = QPixmap()
+        pixmap.loadFromData(new_map)
         if self.first_result:
             self.first_result = False
             self.clear()
-        args = [
-            self.toponym.getCoordinates(),
-            self.map_types[self.map_type],
-            self.scale,
-            self.object_label,
-        ]
-        pixmap = QPixmap()
-        pixmap.loadFromData(self.api_interaction.get_image(*args))
         self.setPixmap(pixmap)
-        print("View was updated")
+        # print("View was updated")
 
     def getCurrentAddress(self):
         if self.toponym:
@@ -126,11 +135,34 @@ class MapLabel(QLabel):
             return self.toponym.getPostalCode()
         return None
 
-    def isAddressUpdated(self):
-        if self.new_address:
-            self.new_address = False
-            return True
-        return False
+    def getStatusCode(self):
+        return self.result_code
+
+    def mapMove(self, direction):
+        if not self.toponym:
+            return
+        lat, long = self.map_center
+        if direction == "up":
+            long += self.toponym.getDeltaLatitude()
+            # print("Move up")
+        elif direction == "down":
+            long -= self.toponym.getDeltaLatitude()
+            # print("Move down")
+        elif direction == "right":
+            lat += self.toponym.getDeltaLongitude()
+            # print("Move right")
+        elif direction == "left":
+            lat -= self.toponym.getDeltaLongitude()
+            # print("Move left")
+        if long < -180:
+            long = -180
+        elif long > 180:
+            long = 180
+        if lat < -180:
+            lat = -180
+        elif lat > 180:
+            lat = 180
+        self.map_center = lat, long
 
 
 class MapSearcher(QMainWindow):
@@ -231,19 +263,18 @@ class MapSearcher(QMainWindow):
         vertical_layout.addWidget(address_options_group, alignment=Qt.AlignBaseline)
         vertical_layout.addWidget(reset_search_result_button, alignment=Qt.AlignCenter)
 
-        # # message box (if nothing not found)
-        # self.errorMessage = QMessageBox(self)
-        # self.errorMessage.setIcon(QMessageBox.Critical)
-        # self.errorMessage.setWindowModality(Qt.ApplicationModal)
-
         # show window
         self.show()
         self.changeType(0)
 
     def newSearchRequest(self):
         self.mapLabel.execute("setAddress", **{"address": self.search_input.text()})
-        if not self.mapLabel.isAddressUpdated():
+        status_code = self.mapLabel.getStatusCode()
+        if status_code == 404:
             QMessageBox.information(self, "Search Result", "Nothing not found!\nPlease, specify the address")
+            return
+        elif status_code == 401:
+            QMessageBox.critical(self, "Search result", "This area is not allowed to display!")
             return
         self.currentAddress = self.mapLabel.getCurrentAddress()
         self.currentPostalCode = self.mapLabel.getCurrentPostalCode()
@@ -268,7 +299,11 @@ class MapSearcher(QMainWindow):
                 postalCode += f", {self.currentPostalCode}"
             else:
                 postalCode += ", no postalCode"
-        self.current_address.setText(address + postalCode)
+        fullAddress = address + postalCode
+        self.current_address.setText(fullAddress)
+        self.current_address.setCursorPosition(0)
+        self.current_address.setToolTip(fullAddress)
+        self.search_input.clearFocus()
 
     def showPostalCode(self, state):
         self.updateAddressLine(state)
@@ -278,23 +313,24 @@ class MapSearcher(QMainWindow):
         self.currentAddress = None
         self.currentPostalCode = None
         self.current_address.clear()
+        self.current_address.setToolTip("")
         self.search_input.clear()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
         if event.isAutoRepeat():
             return
-        if event.key() == Qt.Key_PageUp:
+        elif event.key() == Qt.Key_PageUp:
             self.mapLabel.execute("scaleUp")
         elif event.key() == Qt.Key_PageDown:
             self.mapLabel.execute("scaleDown")
         elif event.key() == Qt.Key_Up:
-            pass
+            self.mapLabel.execute("mapMove", **{"direction": "up"})
         elif event.key() == Qt.Key_Down:
-            pass
-        elif event.key() == Qt.Key_Left:
-            pass
+            self.mapLabel.execute("mapMove", **{"direction": "down"})
         elif event.key() == Qt.Key_Right:
-            pass
+            self.mapLabel.execute("mapMove", **{"direction": "right"})
+        elif event.key() == Qt.Key_Left:
+            self.mapLabel.execute("mapMove", **{"direction": "left"})
 
 
 if __name__ == "__main__":

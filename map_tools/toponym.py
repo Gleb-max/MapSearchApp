@@ -2,8 +2,11 @@ class Toponym:
     def __init__(self, data):
         self.data = data
 
+    def __str__(self):
+        return super().__str__() + f" (Address: {self.getAddress()})"
+
     def getCoordinates(self):
-        return self.data["Point"]["pos"].replace(" ", ",")
+        return tuple(map(float, self.data["Point"]["pos"].split()))
 
     def getCountry(self):
         return self.data["metaDataProperty"]["GeocoderMetaData"]["AddressDetails"]["Country"]

@@ -21,15 +21,15 @@ class ApiInteraction:
             return None
         return Toponym(toponyms[0]["GeoObject"])
 
-    def get_image(self, coordinates, map_type, scale, label=False):
+    def get_image(self, coordinates, map_type, scale, label=None):
         map_params = {
             "ll": coordinates,
             "l": map_type,
             "z": scale,
         }
-        if label:
-            map_params["pt"] = coordinates.replace(' ', ',') + ",flag"
+        if label is not None:
+            map_params["pt"] = ",".join(map(str, label)) + ",pm2rdm"
         response = requests.get(self.MAP_API_SERVER, params=map_params)
-        if not response or response.status_code == 404:
+        if not response or response.status_code == 400:
             return None
         return response.content
