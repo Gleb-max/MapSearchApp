@@ -221,7 +221,7 @@ class MapSearcher(QMainWindow):
         # reset search result button
         reset_search_result_button = QPushButton()
         reset_search_result_button.setText("Reset Search Result")
-        reset_search_result_button.setStyleSheet("background-color: red")
+        reset_search_result_button.setStyleSheet("background-color: #ef2929")
         reset_search_result_button.clicked.connect(self.resetSearchResult)
 
         # adding all layouts and widgets to main layout
