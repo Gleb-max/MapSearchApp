@@ -30,6 +30,6 @@ class ApiInteraction:
         if label is not None:
             map_params["pt"] = ",".join(map(str, label)) + ",pm2rdm"
         response = requests.get(self.MAP_API_SERVER, params=map_params)
-        if not response or response.status_code == 400:
+        if not response or response.status_code in [400, 404]:
             return None
         return response.content
