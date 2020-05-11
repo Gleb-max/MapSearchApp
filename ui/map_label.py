@@ -1,20 +1,22 @@
+from PyQt5.QtTest import QTest
 from map_tools.api import ApiInteraction
+from PyQt5.QtCore import QByteArray, pyqtSignal
 from PyQt5.QtWidgets import QSizePolicy, QLabel
-from PyQt5.QtCore import QByteArray, Qt, QPointF
 from PyQt5.QtGui import QPixmap, QMouseEvent, QMovie
 
 
 class MapLabel(QLabel):
-    MIN_SCALE = 0
+    MIN_SCALE = 1
     MAX_SCALE = 17
     GIF_BACKGROUND = "img/default.gif"
+    clicked = pyqtSignal([QMouseEvent])
 
     def __init__(self):
         super().__init__()
         self.first_result = True
         self.map_url = None
         self.toponym = None
-        self.scale = 5
+        self.scale = self.MAX_SCALE
         self.map_type = 0
         self.object_label = True
         self.map_center = None
@@ -52,18 +54,17 @@ class MapLabel(QLabel):
 
     def setAddress(self, address):
         new_toponym = self.api_interaction.get_geocode(address)
-        # print(f"Found new toponym: {new_toponym}")
         if new_toponym is None:
             self.result_code = 404
             return
         self.result_code = 200
         self.toponym = new_toponym
+        self.scale = self.MAX_SCALE
         self.object_label = True
         self.map_center = self.toponym.getCoordinates()
-        # print("Map address was update")
+        self.point = self.toponym.getCoordinates()
 
     def setMapType(self, type_id):
-        # print(f"Set new map type ({self.map_types[type_id]})")
         if type_id in self.map_types:
             self.map_type = type_id
 
@@ -71,21 +72,17 @@ class MapLabel(QLabel):
         if self.scale == self.MAX_SCALE:
             return
         self.scale += 1
-        # print("Scale was up")
 
     def scaleDown(self):
         if self.scale == self.MIN_SCALE:
             return
         self.scale -= 1
-        # print("Scale was down")
 
     def hideLabel(self):
         self.object_label = False
-        # print("Label reset")
 
     def updateView(self):
         if self.toponym is None:
-            # print("no address")
             return
         args = [
             ",".join(map(str, self.map_center)),
@@ -104,11 +101,11 @@ class MapLabel(QLabel):
             self.first_result = False
             self.clear()
         self.setPixmap(pixmap)
-        # print("View was updated")
+        QTest.qWait(10)
 
     def getCurrentAddress(self):
         if self.toponym:
-            return self.toponym.getAddress()
+            return self.toponym.getName()
         return None
 
     def getCurrentPostalCode(self):
@@ -120,38 +117,33 @@ class MapLabel(QLabel):
         return self.result_code
 
     def mapMove(self, direction):
-        if not self.toponym:
+        if not self.toponym or self.scale == 1:
             return
-        lat, long = self.map_center
+        long, lat = self.map_center
+        delta_lat = self.toponym.getDeltaLatitude() * 2 ** (self.MAX_SCALE - self.scale) * 0.8
+        delta_long = self.toponym.getDeltaLongitude() * 2 ** (self.MAX_SCALE - self.scale) * 0.8
         if direction == "up":
-            long += self.toponym.getDeltaLatitude()
-            # print("Move up")
+            lat += delta_lat
         elif direction == "down":
-            long -= self.toponym.getDeltaLatitude()
-            # print("Move down")
+            lat -= delta_lat
         elif direction == "right":
-            lat += self.toponym.getDeltaLongitude()
-            # print("Move right")
+            long += delta_long
         elif direction == "left":
-            lat -= self.toponym.getDeltaLongitude()
-            # print("Move left")
-        if long < -180:
-            long = -180
+            long -= delta_long
+        start = self.toponym.getCoordinates()
+        if (self.map_center[0] < start[0] < long) or (self.map_center[0] > start[0] > long):
+            long = start[0]
+        elif long < -180:
+            long = -180 + (delta_long % 180) / 2
         elif long > 180:
-            long = 180
-        if lat < -180:
-            lat = -180
-        elif lat > 180:
-            lat = 180
-        self.map_center = lat, long
+            long = 180 - (delta_long % 180) / 2
+        if (self.map_center[1] < start[1] < lat) or (self.map_center[1] > start[1] > lat):
+            lat = start[1]
+        elif lat < -90:
+            lat = -90 + (delta_lat % 90) / 2
+        elif lat > 90:
+            lat = 90 - (delta_lat % 90) / 2
+        self.map_center = round(long, 6), round(lat, 6)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if not self.toponym:
-            return
-        pos = event.localPos()
-        x, y = pos.x(), pos.y()
-        print(x, y)
-        if event.button() == Qt.LeftButton:
-            print("search address")
-        elif event.button() == Qt.RightButton:
-            print("search organisation")
+        self.clicked.emit(event)

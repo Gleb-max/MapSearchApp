@@ -1,4 +1,6 @@
 import sys
+import math
+from math import cos
 from PyQt5 import QtGui
 from PyQt5.QtCore import Qt
 from ui.map_label import MapLabel
@@ -18,6 +20,23 @@ from PyQt5.QtWidgets import (
 
 
 SCREEN_SIZE = [700, 700]
+
+
+def lonlat_distance(a, b):
+
+    degree_to_meters_factor = 111 * 1000
+    a_lon, a_lat = a
+    b_lon, b_lat = b
+
+    radians_latitude = math.radians((a_lat + b_lat) / 2.)
+    lat_lon_factor = math.cos(radians_latitude)
+
+    dx = abs(a_lon - b_lon) * degree_to_meters_factor * lat_lon_factor
+    dy = abs(a_lat - b_lat) * degree_to_meters_factor
+
+    distance = math.sqrt(dx * dx + dy * dy)
+
+    return distance
 
 
 class MapSearcher(QMainWindow):
@@ -117,6 +136,7 @@ class MapSearcher(QMainWindow):
         vertical_layout.addWidget(map_type_group, alignment=Qt.AlignBaseline)
         vertical_layout.addWidget(address_options_group, alignment=Qt.AlignBaseline)
         vertical_layout.addWidget(reset_search_result_button, alignment=Qt.AlignCenter)
+        self.mapLabel.clicked.connect(self.clickAddress)
 
         # show window
         self.show()
@@ -124,9 +144,13 @@ class MapSearcher(QMainWindow):
 
     def newSearchRequest(self):
         self.mapLabel.execute("setAddress", **{"address": self.search_input.text()})
+        self.showRequestResult()
+
+    def showRequestResult(self):
         status_code = self.mapLabel.getStatusCode()
         if status_code == 404:
-            QMessageBox.information(self, "Search Result", "Nothing not found!\nPlease, specify the address")
+            QMessageBox.information(self, "Search Result",
+                                    "Nothing not found!\nPlease, specify the address")
             return
         elif status_code == 401:
             QMessageBox.critical(self, "Search result", "This area is not allowed to display!")
@@ -170,6 +194,60 @@ class MapSearcher(QMainWindow):
         self.current_address.clear()
         self.current_address.setToolTip("")
         self.search_input.clear()
+
+    def mousePressEvent(self, event):
+        focused_widget = QApplication.focusWidget()
+        if focused_widget:
+            focused_widget.clearFocus()
+        QMainWindow.mousePressEvent(self, event)
+
+    def clickAddress(self, event):
+        label = self.mapLabel
+        if not label or not label.toponym:
+            return
+        pos = event.localPos()
+        x, y = pos.x(), pos.y()
+        delta_long = 0.00001072883606 * 512 * 2 ** (label.MAX_SCALE - label.scale
+                                                    ) / label.size().width() * (
+                             x - label.size().width() / 2)
+        delta_lat = 0.00000536441803 * 512 * 2 ** (label.MAX_SCALE - label.scale
+                                                   ) / label.size().height() * (
+                            label.size().height() / 2 - y)
+        if event.button() == Qt.LeftButton:
+            new_toponym = label.api_interaction.get_geocode(", ".join(map(str, (
+                label.map_center[0] + delta_long,
+                label.map_center[1] + delta_lat))), rspn=1)
+            if new_toponym is None:
+                return
+            label.result_code = 200
+            label.toponym = new_toponym
+            label.object_label = True
+            self.showRequestResult()
+            label.updateView()
+        elif event.button() == Qt.RightButton:
+            new_toponym = label.api_interaction.get_geocode(", ".join(map(str, (
+                label.map_center[0] + delta_long,
+                label.map_center[1] + delta_lat))), rspn=1)
+            if not new_toponym:
+                return
+            if lonlat_distance(new_toponym.getCoordinates(), (
+                label.map_center[0] + delta_long,
+                label.map_center[1] + delta_lat)) > 50:
+                return
+            organisation = label.api_interaction.get_organisation((
+                label.map_center[0] + delta_long,
+                label.map_center[1] + delta_lat,
+            ), new_toponym.getAddress(), rspn=1, type="biz", spn="{},{}".format(
+                1 / (111000 * abs(cos(label.map_center[1] + delta_lat))) * 50,
+                str(1 / 111000 * 50)))
+            if organisation is None:
+                return
+            organisation.postal_code = new_toponym.getPostalCode()
+            label.result_code = 200
+            label.toponym = organisation
+            label.object_label = True
+            self.showRequestResult()
+            label.updateView()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
         if event.isAutoRepeat():
